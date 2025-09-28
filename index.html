@@ -149,6 +149,9 @@
         <div class="notice">
             🔒 This tool runs completely on your device. No data is uploaded or sent to any server. Your privacy is 100% protected.
         </div>
+        <div class="notice">
+            🧠 Memory-efficient processing: Large PDFs are processed in chunks to prevent browser crashes and ensure smooth conversion.
+        </div>
         <h1>PDF Dark Mode Converter</h1>
         <label for="fileInput" class="custom-file-upload">Choose PDF File</label>
         <input type="file" id="fileInput" class="file-input" accept="application/pdf">
@@ -164,12 +167,50 @@
         let modifiedPdfBytes;
         let originalFileName = "";
 
+        // Memory management configuration
+        const CHUNK_SIZE = 25; // Process pages in chunks of 25
+        const MEMORY_THRESHOLD = 0.8; // Start memory management at 80% usage
+        const MIN_CHUNK_SIZE = 5; // Minimum chunk size for very low memory situations
+        
+        function getMemoryInfo() {
+            // Try to get memory information if available
+            if ('memory' in performance) {
+                const memory = performance.memory;
+                const usedMemory = memory.usedJSHeapSize;
+                const totalMemory = memory.totalJSHeapSize;
+                const memoryUsage = usedMemory / totalMemory;
+                return { usedMemory, totalMemory, memoryUsage };
+            }
+            return null;
+        }
+
+        function forceGarbageCollection() {
+            // Force garbage collection by creating and removing temporary objects
+            if (window.gc) {
+                window.gc();
+            } else {
+                // Fallback: create temporary objects to trigger GC
+                const temp = new Array(100000).fill(null);
+                temp.length = 0;
+            }
+        }
+
         function handleFile(file) {
             originalFileName = file.name.replace(/\.pdf$/i, '');
             const fileReader = new FileReader();
             fileReader.onload = async function() {
                 document.getElementById('progressContainer').style.display = 'block';
-                await renderPDF(new Uint8Array(this.result));
+                try {
+                    await renderPDF(new Uint8Array(this.result));
+                } catch (error) {
+                    console.error('Error processing PDF:', error);
+                    document.getElementById('progressText').innerText = 'Error processing PDF. The file may be too large or corrupted. Please try with a smaller PDF or split it into multiple files.';
+                    document.getElementById('progressContainer').style.display = 'none';
+                }
+            };
+            fileReader.onerror = function() {
+                document.getElementById('progressText').innerText = 'Error reading file. Please try again.';
+                document.getElementById('progressContainer').style.display = 'none';
             };
             fileReader.readAsArrayBuffer(file);
         }
@@ -191,20 +232,26 @@
             }
         });
 
-        async function renderPDF(pdfData) {
-            const pdfDoc = await PDFLib.PDFDocument.create();
-            const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
-            const progressBar = document.getElementById('progressBar');
-            const progressText = document.getElementById('progressText');
-            const pdfContainer = document.getElementById('pdfContainer');
-            pdfContainer.innerHTML = '';
+        async function processPageChunk(pdf, pdfDoc, startPage, endPage, totalPages, progressBar, progressText, pdfContainer) {
+            const processedPages = [];
+            
+            for (let i = startPage; i <= endPage; i++) {
+                const currentPage = i + 1;
+                progressBar.style.width = `${(currentPage / totalPages) * 100}%`;
+                progressText.innerText = currentPage === totalPages ? 
+                    "Finalizing... Almost done!" : 
+                    `Processing page ${currentPage}/${totalPages} (Chunk ${Math.floor(startPage / CHUNK_SIZE) + 1})`;
 
-            for (let i = 0; i < pdf.numPages; i++) {
-                progressBar.style.width = `${((i + 1) / pdf.numPages) * 100}%`;
-                progressText.innerText = (i + 1 === pdf.numPages) ? "Finalizing... Almost done!" : `${i + 1}/${pdf.numPages}`;
-
-                const page = await pdf.getPage(i + 1);
-                const scale = 3;
+                const page = await pdf.getPage(currentPage);
+                
+                // Adaptive scale based on memory usage
+                const memInfo = getMemoryInfo();
+                let scale = 3;
+                if (memInfo && memInfo.memoryUsage > MEMORY_THRESHOLD) {
+                    scale = 2; // Reduce quality to save memory
+                    progressText.innerText += " (Memory saving mode)";
+                }
+                
                 const viewport = page.getViewport({ scale });
                 const canvas = document.createElement('canvas');
                 const ctx = canvas.getContext('2d');
@@ -229,6 +276,11 @@
                 }
                 ctx.putImageData(imageData, 0, 0);
 
+                // Only show the last few canvases to save DOM memory
+                if (pdfContainer.children.length >= 3) {
+                    const oldCanvas = pdfContainer.firstChild;
+                    pdfContainer.removeChild(oldCanvas);
+                }
                 pdfContainer.appendChild(canvas);
 
                 // Convert modified canvas to PNG and add to PDF
@@ -241,8 +293,106 @@
                     width: viewport.width,
                     height: viewport.height
                 });
+
+                // Store page info for cleanup
+                processedPages.push({ canvas, imageData, ctx });
+
+                // Check memory usage and cleanup if necessary
+                const updatedMemInfo = getMemoryInfo();
+                if (updatedMemInfo && updatedMemInfo.memoryUsage > MEMORY_THRESHOLD) {
+                    // Force cleanup of processed pages in this chunk
+                    processedPages.forEach(pageData => {
+                        pageData.ctx.clearRect(0, 0, pageData.canvas.width, pageData.canvas.height);
+                        pageData.canvas.width = 1;
+                        pageData.canvas.height = 1;
+                    });
+                    forceGarbageCollection();
+                    
+                    // Small delay to allow GC to work
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
             }
+
+            // Final cleanup for this chunk
+            processedPages.forEach(pageData => {
+                pageData.ctx.clearRect(0, 0, pageData.canvas.width, pageData.canvas.height);
+                pageData.canvas.width = 1;
+                pageData.canvas.height = 1;
+            });
+            forceGarbageCollection();
+            
+            return endPage - startPage + 1;
+        }
+
+        async function renderPDF(pdfData) {
+            const pdfDoc = await PDFLib.PDFDocument.create();
+            const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+            const pdfContainer = document.getElementById('pdfContainer');
+            pdfContainer.innerHTML = '';
+
+            const totalPages = pdf.numPages;
+            let processedPages = 0;
+            
+            // Adaptive chunk size based on total pages and memory constraints
+            let currentChunkSize = CHUNK_SIZE;
+            const memInfo = getMemoryInfo();
+            if (memInfo && memInfo.memoryUsage > MEMORY_THRESHOLD) {
+                currentChunkSize = Math.max(MIN_CHUNK_SIZE, Math.floor(CHUNK_SIZE / 2));
+                progressText.innerText = "Low memory detected - using smaller chunks for stability";
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            
+            // For very large PDFs, use smaller chunks
+            if (totalPages > 200) {
+                currentChunkSize = Math.max(MIN_CHUNK_SIZE, Math.floor(currentChunkSize / 2));
+            }
+
+            // Process pages in chunks
+            for (let chunkStart = 0; chunkStart < totalPages; chunkStart += currentChunkSize) {
+                const chunkEnd = Math.min(chunkStart + currentChunkSize - 1, totalPages - 1);
+                
+                progressText.innerText = `Processing chunk ${Math.floor(chunkStart / currentChunkSize) + 1}/${Math.ceil(totalPages / currentChunkSize)}...`;
+                
+                try {
+                    await processPageChunk(pdf, pdfDoc, chunkStart, chunkEnd, totalPages, progressBar, progressText, pdfContainer);
+                    processedPages += (chunkEnd - chunkStart + 1);
+                } catch (error) {
+                    console.error('Error processing chunk:', error);
+                    progressText.innerText = `Error processing pages ${chunkStart + 1}-${chunkEnd + 1}. Retrying with smaller chunks...`;
+                    
+                    // Retry with smaller chunk size
+                    if (currentChunkSize > MIN_CHUNK_SIZE) {
+                        currentChunkSize = Math.max(MIN_CHUNK_SIZE, Math.floor(currentChunkSize / 2));
+                        chunkStart -= currentChunkSize; // Retry this chunk
+                        continue;
+                    } else {
+                        throw error; // If minimum chunk size fails, propagate error
+                    }
+                }
+                
+                // Force garbage collection between chunks
+                forceGarbageCollection();
+                
+                // Small delay between chunks to allow browser to catch up
+                await new Promise(resolve => setTimeout(resolve, 50));
+                
+                // Check memory status and adjust chunk size dynamically
+                const currentMemInfo = getMemoryInfo();
+                if (currentMemInfo && currentMemInfo.memoryUsage > MEMORY_THRESHOLD && currentChunkSize > MIN_CHUNK_SIZE) {
+                    currentChunkSize = Math.max(MIN_CHUNK_SIZE, Math.floor(currentChunkSize / 2));
+                    progressText.innerText += " (Reducing chunk size due to high memory usage)";
+                }
+            }
+
+            progressText.innerText = "Saving PDF...";
             modifiedPdfBytes = await pdfDoc.save();
+            
+            // Final cleanup
+            pdfContainer.innerHTML = '';
+            forceGarbageCollection();
+            
             document.getElementById('progressContainer').style.display = 'none';
             triggerDownload();
         }
