@@ -69,6 +69,27 @@
             font-size: 16px;
             margin-bottom: 10px;
         }
+        .controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        .theme-selector {
+            padding: 10px 15px;
+            background-color: #2a2a2a;
+            color: white;
+            border: 1px solid #444;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .theme-selector:focus {
+            outline: none;
+            border-color: #007bff;
+        }
         canvas {
             border: 1px solid white;
             margin-top: 10px;
@@ -138,6 +159,9 @@
                 font-size: 12px;
                 margin-top: 50px;
             }
+            .controls {
+                flex-direction: column;
+            }
         }
     </style>
 </head>
@@ -150,7 +174,17 @@
             🔒 This tool runs completely on your device. No data is uploaded or sent to any server. Your privacy is 100% protected.
         </div>
         <h1>PDF Dark Mode Converter</h1>
-        <label for="fileInput" class="custom-file-upload">Choose PDF File</label>
+        <div class="controls">
+            <label for="fileInput" class="custom-file-upload">Choose PDF File</label>
+            <select id="themeSelector" class="theme-selector">
+                <option value="classic">Classic Inversion</option>
+                <option value="claude" selected>Claude Warm</option>
+                <option value="chatgpt">ChatGPT Cool</option>
+                <option value="sepia">Sepia Dark</option>
+                <option value="midnight">Midnight Blue</option>
+                <option value="forest">Forest Green</option>
+            </select>
+        </div>
         <input type="file" id="fileInput" class="file-input" accept="application/pdf">
         <div id="progressContainer">
             <div id="progressBar"></div>
@@ -163,6 +197,16 @@
     <script>
         let modifiedPdfBytes;
         let originalFileName = "";
+        // Theme definitions
+
+        const themes = {
+            classic: { r: 0, g: 0, b: 0, name: 'Classic' },
+            claude: { r: 42, g: 37, b: 34, name: 'Claude Warm' },
+            chatgpt: { r: 52, g: 53, b: 65, name: 'ChatGPT Cool' },
+            sepia: { r: 40, g: 35, b: 25, name: 'Sepia' },
+            midnight: { r: 25, g: 30, b: 45, name: 'Midnight Blue' },
+            forest: { r: 25, g: 35, b: 30, name: 'Forest Green' }
+        };
 
         function handleFile(file) {
             originalFileName = file.name.replace(/\.pdf$/i, '');
@@ -192,6 +236,8 @@
         });
 
         async function renderPDF(pdfData) {
+            const selectedTheme = document.getElementById('themeSelector').value;
+            const theme = themes[selectedTheme];
             const pdfDoc = await PDFLib.PDFDocument.create();
             const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
             const progressBar = document.getElementById('progressBar');
@@ -222,10 +268,24 @@
                 const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                 const data = imageData.data;
 
+                const bgR = theme.r;
+                const bgG = theme.g;
+                const bgB = theme.b;
+
                 for (let j = 0; j < data.length; j += 4) {
-                    data[j] = 255 - data[j];     // Red
-                    data[j + 1] = 255 - data[j + 1]; // Green
-                    data[j + 2] = 255 - data[j + 2]; // Blue
+                    const r = data[j];
+                    const g = data[j + 1];
+                    const b = data[j + 2];
+
+                    // Calculate brightness (0-255)
+                    const brightness = (r + g + b) / 3;
+
+                    // Map white (255) to background color, black (0) to white
+                    const factor = 1 - (brightness / 255);
+
+                    data[j] = bgR + (255 - bgR) * factor;         // Red
+                    data[j + 1] = bgG + (255 - bgG) * factor;     // Green
+                    data[j + 2] = bgB + (255 - bgB) * factor;     // Blue
                 }
                 ctx.putImageData(imageData, 0, 0);
 
@@ -249,10 +309,12 @@
 
         function triggerDownload() {
             if (modifiedPdfBytes) {
+                const selectedTheme = document.getElementById('themeSelector').value;
+                const themeName = themes[selectedTheme].name.toLowerCase().replace(/\s+/g, '_');
                 const blob = new Blob([modifiedPdfBytes], { type: 'application/pdf' });
                 const link = document.createElement('a');
                 link.href = URL.createObjectURL(blob);
-                link.download = `${originalFileName}_dark_mode.pdf`;
+                link.download = `${originalFileName}_${themeName}_dark.pdf`;
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
