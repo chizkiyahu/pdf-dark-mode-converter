@@ -197,7 +197,9 @@
 
     <script>
         let modifiedPdfBytes;
+        let originalPdfData = null;
         let originalFileName = "";
+        let currentRenderId = 0;
         // Theme definitions
 
         const themes = {
@@ -213,8 +215,12 @@
             originalFileName = file.name.replace(/\.pdf$/i, '');
             const fileReader = new FileReader();
             fileReader.onload = async function() {
-                document.getElementById('progressContainer').style.display = 'block';
-                await renderPDF(new Uint8Array(this.result));
+                const fileData = new Uint8Array(this.result);
+                originalPdfData = fileData;
+                const progressContainer = document.getElementById('progressContainer');
+                progressContainer.style.display = 'block';
+                document.getElementById('downloadBtn').style.display = 'none';
+                await renderPDF(fileData);
             };
             fileReader.readAsArrayBuffer(file);
         }
@@ -236,7 +242,17 @@
             }
         });
 
+        document.getElementById('themeSelector').addEventListener('change', async function() {
+            if (originalPdfData) {
+                const progressContainer = document.getElementById('progressContainer');
+                progressContainer.style.display = 'block';
+                document.getElementById('downloadBtn').style.display = 'none';
+                await renderPDF(originalPdfData);
+            }
+        });
+
         async function renderPDF(pdfData) {
+            const renderId = ++currentRenderId;
             const selectedTheme = document.getElementById('themeSelector').value;
             const theme = themes[selectedTheme];
             const pdfDoc = await PDFLib.PDFDocument.create();
@@ -244,9 +260,16 @@
             const progressBar = document.getElementById('progressBar');
             const progressText = document.getElementById('progressText');
             const pdfContainer = document.getElementById('pdfContainer');
+            const progressContainer = document.getElementById('progressContainer');
+            modifiedPdfBytes = null;
+            progressBar.style.width = '0';
+            progressText.innerText = `0/${pdf.numPages}`;
             pdfContainer.innerHTML = '';
 
             for (let i = 0; i < pdf.numPages; i++) {
+                if (renderId !== currentRenderId) {
+                    return;
+                }
                 progressBar.style.width = `${((i + 1) / pdf.numPages) * 100}%`;
                 progressText.innerText = (i + 1 === pdf.numPages) ? "Finalizing... Almost done!" : `${i + 1}/${pdf.numPages}`;
 
@@ -264,6 +287,10 @@
                     viewport: viewport
                 };
                 await page.render(renderContext).promise;
+
+                if (renderId !== currentRenderId) {
+                    return;
+                }
 
                 // Apply dark mode effect
                 const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -290,10 +317,19 @@
                 }
                 ctx.putImageData(imageData, 0, 0);
 
+                if (renderId !== currentRenderId) {
+                    return;
+                }
                 pdfContainer.appendChild(canvas);
 
                 // Convert modified canvas to PNG and add to PDF
+                if (renderId !== currentRenderId) {
+                    return;
+                }
                 const imgBytes = await new Promise(resolve => canvas.toBlob(blob => blob.arrayBuffer().then(resolve), 'image/png'));
+                if (renderId !== currentRenderId) {
+                    return;
+                }
                 const jpgImage = await pdfDoc.embedPng(imgBytes);
                 const newPage = pdfDoc.addPage([viewport.width, viewport.height]);
                 newPage.drawImage(jpgImage, {
@@ -303,8 +339,16 @@
                     height: viewport.height
                 });
             }
+            if (renderId !== currentRenderId) {
+                return;
+            }
+
+            progressText.innerText = `${pdf.numPages}/${pdf.numPages}`;
             modifiedPdfBytes = await pdfDoc.save();
-            document.getElementById('progressContainer').style.display = 'none';
+            if (renderId !== currentRenderId) {
+                return;
+            }
+            progressContainer.style.display = 'none';
             triggerDownload();
         }
 
