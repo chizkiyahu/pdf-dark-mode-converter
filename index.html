@@ -306,7 +306,7 @@
                     const b = data[j + 2];
 
                     // Calculate brightness (0-255)
-                    const brightness = (r + g + b) / 3;
+                    const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
 
                     // Map white (255) to background color, black (0) to white
                     const factor = 1 - (brightness / 255);
