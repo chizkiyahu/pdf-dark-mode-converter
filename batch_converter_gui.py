@@ -27,6 +27,11 @@ class PDFBatchConverterGUI:
         self.is_converting = False
         self.total_files = 0
         self.processed_files = 0
+        self.converted_count = 0
+        self.skipped_count = 0
+
+        # Default quick scan path (user configurable)
+        self.quick_scan_path = "Y:/Ready Jobs"
 
         self.setup_ui()
 
@@ -49,34 +54,26 @@ class PDFBatchConverterGUI:
 
         self.folder_label = ttk.Label(folder_frame, text="No folder selected",
                                       foreground="gray")
-        self.folder_label.grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 10))
+        self.folder_label.grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=(0, 10))
 
         self.browse_btn = ttk.Button(folder_frame, text="Browse...",
                                      command=self.browse_folder)
         self.browse_btn.grid(row=1, column=0, padx=(0, 5))
 
-        # Theme selection
-        theme_frame = ttk.LabelFrame(main_frame, text="Dark Mode Theme", padding="10")
-        theme_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        self.quick_scan_btn = ttk.Button(folder_frame, text="Quick Scan Ready Jobs",
+                                         command=self.quick_scan)
+        self.quick_scan_btn.grid(row=1, column=1, padx=(0, 5))
 
+        self.settings_btn = ttk.Button(folder_frame, text="Settings...",
+                                       command=self.open_settings)
+        self.settings_btn.grid(row=1, column=2)
+
+        # Always use True Black (Classic) theme
         self.theme_var = tk.StringVar(value="classic")
-        themes = [
-            ("True Black (Classic)", "classic"),
-            ("Claude Warm", "claude"),
-            ("ChatGPT Cool", "chatgpt"),
-            ("Sepia Dark", "sepia"),
-            ("Midnight Blue", "midnight"),
-            ("Forest Green", "forest")
-        ]
-
-        for i, (label, value) in enumerate(themes):
-            rb = ttk.Radiobutton(theme_frame, text=label, variable=self.theme_var,
-                                value=value)
-            rb.grid(row=i // 2, column=i % 2, sticky=tk.W, padx=5, pady=2)
 
         # Options
         options_frame = ttk.LabelFrame(main_frame, text="Options", padding="10")
-        options_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        options_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
 
         self.dry_run_var = tk.BooleanVar(value=False)
         dry_run_cb = ttk.Checkbutton(options_frame, text="Dry Run (show what would be converted without actually converting)",
@@ -85,7 +82,7 @@ class PDFBatchConverterGUI:
 
         # Progress section
         progress_frame = ttk.LabelFrame(main_frame, text="Progress", padding="10")
-        progress_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S),
+        progress_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S),
                            pady=(0, 10))
         progress_frame.columnconfigure(0, weight=1)
         progress_frame.rowconfigure(1, weight=1)
@@ -106,7 +103,7 @@ class PDFBatchConverterGUI:
 
         # Buttons
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=5, column=0, columnspan=3, pady=(10, 0))
+        button_frame.grid(row=4, column=0, columnspan=3, pady=(10, 0))
 
         self.convert_btn = ttk.Button(button_frame, text="Convert All PDFs",
                                       command=self.start_conversion, state='disabled')
@@ -122,7 +119,7 @@ class PDFBatchConverterGUI:
 
         # Configure grid weights
         main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(4, weight=1)
+        main_frame.rowconfigure(3, weight=1)
 
     def browse_folder(self):
         folder = filedialog.askdirectory(title="Select Job Folder")
@@ -135,6 +132,78 @@ class PDFBatchConverterGUI:
             # Count PDFs
             pdf_count = self.count_pdfs(folder)
             self.log(f"Found {pdf_count} PDF file(s) to convert")
+
+    def quick_scan(self):
+        """Quick scan the configured ready jobs path and automatically start conversion"""
+        if os.path.exists(self.quick_scan_path):
+            self.selected_folder = self.quick_scan_path
+            self.folder_label.config(text=self.quick_scan_path, foreground="black")
+            self.convert_btn.config(state='normal')
+            self.log(f"Quick scan: {self.quick_scan_path}")
+
+            # Count PDFs
+            pdf_count = self.count_pdfs(self.quick_scan_path)
+            self.log(f"Found {pdf_count} PDF file(s) to convert")
+
+            # Automatically start conversion
+            self.log("Starting automatic conversion...\n")
+            self.start_conversion()
+        else:
+            messagebox.showerror("Path Not Found",
+                                f"Quick scan path does not exist:\n{self.quick_scan_path}\n\n"
+                                f"Please update it in Settings.")
+
+    def open_settings(self):
+        """Open settings dialog to configure quick scan path"""
+        settings_window = tk.Toplevel(self.root)
+        settings_window.title("Settings")
+        settings_window.geometry("500x150")
+        settings_window.resizable(False, False)
+
+        # Center the window
+        settings_window.transient(self.root)
+        settings_window.grab_set()
+
+        frame = ttk.Frame(settings_window, padding="20")
+        frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # Quick scan path setting
+        ttk.Label(frame, text="Quick Scan Path:", font=("Arial", 10, "bold")).grid(
+            row=0, column=0, sticky=tk.W, pady=(0, 10))
+
+        path_var = tk.StringVar(value=self.quick_scan_path)
+        path_entry = ttk.Entry(frame, textvariable=path_var, width=50)
+        path_entry.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
+
+        def browse_path():
+            folder = filedialog.askdirectory(title="Select Quick Scan Path",
+                                            initialdir=self.quick_scan_path)
+            if folder:
+                path_var.set(folder)
+
+        browse_settings_btn = ttk.Button(frame, text="Browse...", command=browse_path)
+        browse_settings_btn.grid(row=2, column=0, sticky=tk.W, pady=(0, 10))
+
+        def save_settings():
+            new_path = path_var.get()
+            if new_path:
+                self.quick_scan_path = new_path
+                self.log(f"Settings saved: Quick scan path = {new_path}")
+                messagebox.showinfo("Settings Saved", "Quick scan path updated successfully!")
+                settings_window.destroy()
+
+        def cancel_settings():
+            settings_window.destroy()
+
+        # Buttons
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=3, column=0, columnspan=2, pady=(10, 0))
+
+        save_btn = ttk.Button(button_frame, text="Save", command=save_settings)
+        save_btn.grid(row=0, column=0, padx=5)
+
+        cancel_btn = ttk.Button(button_frame, text="Cancel", command=cancel_settings)
+        cancel_btn.grid(row=0, column=1, padx=5)
 
     def count_pdfs(self, folder):
         count = 0
@@ -210,6 +279,8 @@ class PDFBatchConverterGUI:
 
             self.total_files = len(pdf_files)
             self.processed_files = 0
+            self.converted_count = 0
+            self.skipped_count = 0
 
             if self.total_files == 0:
                 self.log("No PDF files found!")
@@ -252,6 +323,7 @@ class PDFBatchConverterGUI:
                     output_mtime = os.path.getmtime(output_path)
                     if source_mtime <= output_mtime:
                         should_convert = False
+                        self.skipped_count += 1
                         if dry_run:
                             self.log(f"[SKIP] {rel_path}")
                             self.log(f"       -> {rel_output} (already up to date)")
@@ -286,6 +358,7 @@ class PDFBatchConverterGUI:
 
                             self.log(f"  ✓ Saved to: {rel_output}")
 
+                        self.converted_count += 1
                         self.processed_files += 1
                         progress = (self.processed_files / self.total_files) * 100
                         self.progress_var.set(progress)
@@ -302,21 +375,28 @@ class PDFBatchConverterGUI:
                 self.log(f"\n{'='*50}")
                 if dry_run:
                     self.log(f"Dry run complete!")
-                    self.log(f"Would convert: {self.processed_files}/{self.total_files} files")
+                    self.log(f"Would convert: {self.converted_count} file(s)")
+                    self.log(f"Would skip: {self.skipped_count} file(s) (already up to date)")
+                    self.log(f"Total analyzed: {self.total_files} file(s)")
                     self.log(f"No files were actually modified.")
                     self.status_label.config(text="Dry run complete!", foreground="blue")
                     messagebox.showinfo("Dry Run Complete",
                                        f"Dry run analyzed {self.total_files} PDF(s)\n"
-                                       f"Would convert: {self.processed_files} file(s)\n\n"
+                                       f"Would convert: {self.converted_count} file(s)\n"
+                                       f"Would skip: {self.skipped_count} file(s)\n\n"
                                        f"No files were actually modified.\n"
                                        f"Uncheck 'Dry Run' to perform actual conversion.")
                 else:
                     self.log(f"Conversion complete!")
-                    self.log(f"Converted: {self.processed_files}/{self.total_files} files")
+                    self.log(f"Converted: {self.converted_count} file(s)")
+                    self.log(f"Skipped: {self.skipped_count} file(s) (already up to date)")
+                    self.log(f"Total processed: {self.total_files} file(s)")
                     self.log(f"DARK MODE folders created in each job folder")
                     self.status_label.config(text="Conversion complete!", foreground="blue")
                     messagebox.showinfo("Complete",
-                                       f"Successfully converted {self.processed_files} PDF(s)!\n\n"
+                                       f"Successfully processed {self.total_files} PDF(s)!\n\n"
+                                       f"Converted: {self.converted_count} file(s)\n"
+                                       f"Skipped: {self.skipped_count} file(s) (already up to date)\n\n"
                                        f"DARK MODE folders created in each job folder.")
 
         except Exception as e:
