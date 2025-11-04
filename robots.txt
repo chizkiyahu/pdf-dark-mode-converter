@@ -1,5 +1,0 @@
-User-agent: *
-Disallow:
-Allow: /
-
-Sitemap: https://chizkiyahu.github.io/sitemap.xml
