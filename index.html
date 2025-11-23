@@ -211,6 +211,12 @@
             forest: { r: 25, g: 35, b: 30, name: 'Forest Green' }
         };
 
+        function applyThemeBackground(theme) {
+            document.body.style.backgroundColor = `rgb(${theme.r}, ${theme.g}, ${theme.b})`;
+        }
+
+        applyThemeBackground(themes[document.getElementById('themeSelector').value]);
+
         function handleFile(file) {
             originalFileName = file.name.replace(/\.pdf$/i, '');
             const fileReader = new FileReader();
@@ -243,6 +249,8 @@
         });
 
         document.getElementById('themeSelector').addEventListener('change', async function() {
+            const selectedTheme = document.getElementById('themeSelector').value;
+            applyThemeBackground(themes[selectedTheme]);
             if (originalPdfData) {
                 const progressContainer = document.getElementById('progressContainer');
                 progressContainer.style.display = 'block';
@@ -255,6 +263,7 @@
             const renderId = ++currentRenderId;
             const selectedTheme = document.getElementById('themeSelector').value;
             const theme = themes[selectedTheme];
+            applyThemeBackground(theme);
             
             // Initialize PDF document later or in chunks
             const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
