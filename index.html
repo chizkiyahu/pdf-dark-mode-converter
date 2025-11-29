@@ -286,8 +286,14 @@
 
         document.getElementById('preserveTextCheckbox').addEventListener('change', async function() {
             // Show/hide the invert images checkbox based on preserve text checkbox state
-            const invertImagesLabel = document.getElementById('invertImagesCheckbox').parentElement;
+            const invertImagesCheckbox = document.getElementById('invertImagesCheckbox');
+            const invertImagesLabel = invertImagesCheckbox.parentElement;
             invertImagesLabel.style.display = this.checked ? 'flex' : 'none';
+            
+            // Default to checked when Preserve Text is enabled (for full color inversion)
+            if (this.checked) {
+                invertImagesCheckbox.checked = true;
+            }
             
             if (originalPdfData) {
                 const progressContainer = document.getElementById('progressContainer');
@@ -336,20 +342,13 @@
             progressText.innerText = 'Loading PDF...';
             
             // Load the PDF with pdf-lib to modify it directly
-            const pdfDoc = await PDFLib.PDFDocument.load(pdfData, { ignoreEncryption: true });
+            const pdfDoc = await PDFLib.PDFDocument.load(pdfData);
             const pages = pdfDoc.getPages();
             const totalPages = pages.length;
             
             progressText.innerText = `0/${totalPages}`;
 
             // Convert theme colors to PDF color (0-1 range) with fixed precision
-            const bgR = (theme.r / 255).toFixed(4);
-            const bgG = (theme.g / 255).toFixed(4);
-            const bgB = (theme.b / 255).toFixed(4);
-            
-            // Calculate inverted theme color for the overlay (to tint after inversion)
-            // When we invert, white becomes black. We want it to become our theme color.
-            // So we add the theme color after inversion.
             const tintR = (theme.r / 255).toFixed(4);
             const tintG = (theme.g / 255).toFixed(4);
             const tintB = (theme.b / 255).toFixed(4);
@@ -408,18 +407,25 @@
                 extGState.set(PDFLib.PDFName.of('GSNorm'), normalGsRef);
 
                 // Build the content stream for color inversion
-                // Strategy:
-                // 1. Draw white rectangle with Difference blend mode (inverts all colors)
-                // 2. Draw theme-colored rectangle with Difference blend mode (shifts black to theme color)
+                // Note: The blend mode approach inverts all content on the page including images.
+                // When invertImages is false, we skip the inversion to preserve original images,
+                // but this also means text colors won't be inverted.
                 
                 let contentOps = '';
                 
-                // Step 1: Invert everything by drawing white with Difference blend
-                contentOps += `q /GSDiff gs 1 1 1 rg 0 0 ${width} ${height} re f Q `;
-                
-                // Step 2: Add theme color tint with Difference blend
-                // This converts the inverted white (now black) to the theme color
-                contentOps += `q /GSDiff gs ${tintR} ${tintG} ${tintB} rg 0 0 ${width} ${height} re f Q `;
+                if (invertImages) {
+                    // Full inversion: Invert all colors including images
+                    // Step 1: Invert everything by drawing white with Difference blend
+                    contentOps += `q /GSDiff gs 1 1 1 rg 0 0 ${width} ${height} re f Q `;
+                    
+                    // Step 2: Add theme color tint with Difference blend
+                    // This converts the inverted white (now black) to the theme color
+                    contentOps += `q /GSDiff gs ${tintR} ${tintG} ${tintB} rg 0 0 ${width} ${height} re f Q `;
+                } else {
+                    // No inversion: Just add a semi-transparent dark overlay
+                    // This darkens the background while preserving original content colors
+                    contentOps += `q /GSNorm gs ${tintR} ${tintG} ${tintB} rg 0 0 ${width} ${height} re f Q `;
+                }
                 
                 // Create content stream reference
                 const invertStreamRef = pdfDoc.context.register(
