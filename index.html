@@ -206,6 +206,10 @@
                 <input type="checkbox" id="preserveTextCheckbox" aria-label="Preserve text to keep PDF searchable">
                 <span>Preserve Text (Searchable)</span>
             </label>
+            <label class="preserve-text-label" for="invertImagesCheckbox">
+                <input type="checkbox" id="invertImagesCheckbox" aria-label="Invert images in preserved text mode">
+                <span>Invert Images</span>
+            </label>
         </div>
         <input type="file" id="fileInput" class="file-input" accept="application/pdf">
         <div id="progressContainer">
@@ -281,6 +285,10 @@
         });
 
         document.getElementById('preserveTextCheckbox').addEventListener('change', async function() {
+            // Show/hide the invert images checkbox based on preserve text checkbox state
+            const invertImagesLabel = document.getElementById('invertImagesCheckbox').parentElement;
+            invertImagesLabel.style.display = this.checked ? 'flex' : 'none';
+            
             if (originalPdfData) {
                 const progressContainer = document.getElementById('progressContainer');
                 progressContainer.style.display = 'block';
@@ -289,21 +297,34 @@
             }
         });
 
+        document.getElementById('invertImagesCheckbox').addEventListener('change', async function() {
+            if (originalPdfData && document.getElementById('preserveTextCheckbox').checked) {
+                const progressContainer = document.getElementById('progressContainer');
+                progressContainer.style.display = 'block';
+                document.getElementById('downloadBtn').style.display = 'none';
+                await renderPDF(originalPdfData);
+            }
+        });
+
+        // Initially hide the invert images checkbox
+        document.getElementById('invertImagesCheckbox').parentElement.style.display = 'none';
+
         async function renderPDF(pdfData) {
             const renderId = ++currentRenderId;
             const selectedTheme = document.getElementById('themeSelector').value;
             const theme = themes[selectedTheme];
             const preserveText = document.getElementById('preserveTextCheckbox').checked;
+            const invertImages = document.getElementById('invertImagesCheckbox').checked;
             applyThemeBackground(theme);
             
             if (preserveText) {
-                await renderPDFPreserveText(pdfData, renderId, theme);
+                await renderPDFPreserveText(pdfData, renderId, theme, invertImages);
             } else {
                 await renderPDFRasterized(pdfData, renderId, theme);
             }
         }
 
-        async function renderPDFPreserveText(pdfData, renderId, theme) {
+        async function renderPDFPreserveText(pdfData, renderId, theme, invertImages) {
             const progressBar = document.getElementById('progressBar');
             const progressText = document.getElementById('progressText');
             const pdfContainer = document.getElementById('pdfContainer');
@@ -315,19 +336,40 @@
             progressText.innerText = 'Loading PDF...';
             
             // Load the PDF with pdf-lib to modify it directly
-            const pdfDoc = await PDFLib.PDFDocument.load(pdfData);
+            const pdfDoc = await PDFLib.PDFDocument.load(pdfData, { ignoreEncryption: true });
             const pages = pdfDoc.getPages();
             const totalPages = pages.length;
             
             progressText.innerText = `0/${totalPages}`;
 
             // Convert theme colors to PDF color (0-1 range) with fixed precision
-            const colorR = (theme.r / 255).toFixed(4);
-            const colorG = (theme.g / 255).toFixed(4);
-            const colorB = (theme.b / 255).toFixed(4);
+            const bgR = (theme.r / 255).toFixed(4);
+            const bgG = (theme.g / 255).toFixed(4);
+            const bgB = (theme.b / 255).toFixed(4);
+            
+            // Calculate inverted theme color for the overlay (to tint after inversion)
+            // When we invert, white becomes black. We want it to become our theme color.
+            // So we add the theme color after inversion.
+            const tintR = (theme.r / 255).toFixed(4);
+            const tintG = (theme.g / 255).toFixed(4);
+            const tintB = (theme.b / 255).toFixed(4);
             
             // Number of pages to process before allowing UI update
             const UI_UPDATE_INTERVAL = 10;
+
+            // Create ExtGState for Difference blend mode (for inversion)
+            const differenceGsDict = pdfDoc.context.obj({
+                Type: PDFLib.PDFName.of('ExtGState'),
+                BM: PDFLib.PDFName.of('Difference'),
+            });
+            const differenceGsRef = pdfDoc.context.register(differenceGsDict);
+
+            // Create ExtGState for normal blend mode
+            const normalGsDict = pdfDoc.context.obj({
+                Type: PDFLib.PDFName.of('ExtGState'),
+                BM: PDFLib.PDFName.of('Normal'),
+            });
+            const normalGsRef = pdfDoc.context.register(normalGsDict);
 
             for (let i = 0; i < totalPages; i++) {
                 if (renderId !== currentRenderId) return;
@@ -339,12 +381,49 @@
                 const page = pages[i];
                 const { width, height } = page.getSize();
 
-                // Create a content stream that draws the background rectangle
-                const backgroundOps = `q ${colorR} ${colorG} ${colorB} rg 0 0 ${width} ${height} re f Q `;
+                // Get or create Resources dictionary
+                let resources = page.node.get(PDFLib.PDFName.of('Resources'));
+                if (!resources) {
+                    resources = pdfDoc.context.obj({});
+                    page.node.set(PDFLib.PDFName.of('Resources'), resources);
+                }
                 
-                // Create background content stream reference
-                const bgStreamRef = pdfDoc.context.register(
-                    pdfDoc.context.flateStream(backgroundOps)
+                // Dereference if it's a reference
+                if (resources instanceof PDFLib.PDFRef) {
+                    resources = pdfDoc.context.lookup(resources);
+                }
+
+                // Get or create ExtGState dictionary in resources
+                let extGState = resources.get(PDFLib.PDFName.of('ExtGState'));
+                if (!extGState) {
+                    extGState = pdfDoc.context.obj({});
+                    resources.set(PDFLib.PDFName.of('ExtGState'), extGState);
+                }
+                if (extGState instanceof PDFLib.PDFRef) {
+                    extGState = pdfDoc.context.lookup(extGState);
+                }
+
+                // Add our graphics states
+                extGState.set(PDFLib.PDFName.of('GSDiff'), differenceGsRef);
+                extGState.set(PDFLib.PDFName.of('GSNorm'), normalGsRef);
+
+                // Build the content stream for color inversion
+                // Strategy:
+                // 1. Draw white rectangle with Difference blend mode (inverts all colors)
+                // 2. Draw theme-colored rectangle with Difference blend mode (shifts black to theme color)
+                
+                let contentOps = '';
+                
+                // Step 1: Invert everything by drawing white with Difference blend
+                contentOps += `q /GSDiff gs 1 1 1 rg 0 0 ${width} ${height} re f Q `;
+                
+                // Step 2: Add theme color tint with Difference blend
+                // This converts the inverted white (now black) to the theme color
+                contentOps += `q /GSDiff gs ${tintR} ${tintG} ${tintB} rg 0 0 ${width} ${height} re f Q `;
+                
+                // Create content stream reference
+                const invertStreamRef = pdfDoc.context.register(
+                    pdfDoc.context.flateStream(contentOps)
                 );
                 
                 // Get the existing content reference
@@ -360,16 +439,14 @@
                             existingRefs = [existingContentRef];
                         }
                     } catch (e) {
-                        // If we can't get existing refs, treat as single reference
                         existingRefs = [existingContentRef];
                     }
                     
-                    // Create new array with background first, then existing content
-                    const newContentsArray = pdfDoc.context.obj([bgStreamRef, ...existingRefs]);
+                    // Append inversion operations after existing content
+                    const newContentsArray = pdfDoc.context.obj([...existingRefs, invertStreamRef]);
                     page.node.set(PDFLib.PDFName.of('Contents'), newContentsArray);
                 } else {
-                    // Page has no content, set background as the only content
-                    page.node.set(PDFLib.PDFName.of('Contents'), bgStreamRef);
+                    page.node.set(PDFLib.PDFName.of('Contents'), invertStreamRef);
                 }
 
                 // Small delay to allow UI update
