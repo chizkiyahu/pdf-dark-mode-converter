@@ -9,6 +9,7 @@
     <meta name="author" content="Chizkiyahu">
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://chizkiyahu.github.io/pdf-dark-mode-converter/">
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://chizkiyahu.github.io/pdf-dark-mode-converter/">
@@ -28,11 +29,6 @@
     }
     </script>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-    <script>
-        pdfjsLib.GlobalWorkerOptions.workerSrc ="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js"
-    </script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.11.0/pdf-lib.min.js" crossorigin="anonymous" referrerpolicy="no-referrer" defer></script>
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <style>
         :root {
@@ -160,6 +156,10 @@
             left: 20px;
             z-index: 1000;
         }
+        .github-ribbon picture,
+        .github-ribbon img {
+            display: block;
+        }
         .sr-only {
             position: absolute;
             width: 1px;
@@ -194,7 +194,10 @@
 </head>
 <body>
     <a href="https://github.com/Chizkiyahu/pdf-dark-mode-converter" class="github-ribbon">
-        <img decoding="async" width="149" height="149" src="./img/forkme_left_red_aa0000.png" alt="View Source Code on GitHub" loading="lazy">
+        <picture>
+            <source srcset="./img/forkme_left_red_aa0000.webp" type="image/webp">
+            <img decoding="async" width="149" height="149" src="./img/forkme_left_red_aa0000.png" alt="View Source Code on GitHub" loading="lazy">
+        </picture>
     </a>
     <main class="container" id="mainContent" role="main">
         <div class="notice">
@@ -238,6 +241,43 @@
             forest: { r: 25, g: 35, b: 30, name: 'Forest Green' }
         };
 
+        const pdfJsSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js";
+        const pdfWorkerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js";
+        const pdfLibSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.11.0/pdf-lib.min.js";
+        let pdfLibReadyPromise = null;
+
+        function loadPdfLibraries() {
+            if (pdfLibReadyPromise) return pdfLibReadyPromise;
+            pdfLibReadyPromise = new Promise((resolve, reject) => {
+                const pdfJsScript = document.createElement('script');
+                pdfJsScript.src = pdfJsSrc;
+                pdfJsScript.crossOrigin = 'anonymous';
+                pdfJsScript.referrerPolicy = 'no-referrer';
+                pdfJsScript.onload = () => {
+                    pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
+                    const pdfLibScript = document.createElement('script');
+                    pdfLibScript.src = pdfLibSrc;
+                    pdfLibScript.crossOrigin = 'anonymous';
+                    pdfLibScript.referrerPolicy = 'no-referrer';
+                    pdfLibScript.onload = () => resolve();
+                    pdfLibScript.onerror = reject;
+                    document.head.appendChild(pdfLibScript);
+                };
+                pdfJsScript.onerror = reject;
+                document.head.appendChild(pdfJsScript);
+            });
+            return pdfLibReadyPromise;
+        }
+
+        async function ensurePdfLibraries() {
+            try {
+                await loadPdfLibraries();
+            } catch (e) {
+                alert("Unable to load PDF libraries. Please check your connection and try again.");
+                throw e;
+            }
+        }
+
         function applyThemeBackground(theme) {
             document.body.style.backgroundColor = `rgb(${theme.r}, ${theme.g}, ${theme.b})`;
         }
@@ -249,6 +289,7 @@
             const fileReader = new FileReader();
             fileReader.onload = async function() {
                 const fileData = new Uint8Array(this.result);
+                await ensurePdfLibraries();
                 originalPdfData = fileData;
                 const progressContainer = document.getElementById('progressContainer');
                 progressContainer.style.display = 'block';
@@ -279,11 +320,16 @@
             const selectedTheme = document.getElementById('themeSelector').value;
             applyThemeBackground(themes[selectedTheme]);
             if (originalPdfData) {
+                await ensurePdfLibraries();
                 const progressContainer = document.getElementById('progressContainer');
                 progressContainer.style.display = 'block';
                 document.getElementById('downloadBtn').style.display = 'none';
                 await renderPDF(originalPdfData);
             }
+        });
+
+        document.querySelector('.custom-file-upload').addEventListener('click', () => {
+            loadPdfLibraries().catch(() => {});
         });
 
         async function renderPDF(pdfData) {
