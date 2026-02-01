@@ -35,6 +35,11 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.11.0/pdf-lib.min.js" crossorigin="anonymous" referrerpolicy="no-referrer" defer></script>
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <style>
+        :root {
+            --accent: #0056d2;
+            --accent-contrast: #ffffff;
+            --focus-glow: #7fb3ff;
+        }
         body {
             font-family: Arial, sans-serif;
             text-align: center;
@@ -63,13 +68,18 @@
         .custom-file-upload {
             display: inline-block;
             padding: 10px 15px;
-            background-color: #007bff;
-            color: white;
+            background-color: var(--accent);
+            color: var(--accent-contrast);
             border-radius: 5px;
             cursor: pointer;
             font-size: 16px;
             margin-bottom: 0;
             line-height: 1.2;
+            border: 1px solid var(--accent);
+        }
+        .custom-file-upload:focus-visible {
+            outline: 3px solid var(--focus-glow);
+            outline-offset: 2px;
         }
         .controls {
             display: flex;
@@ -90,7 +100,7 @@
         }
         .theme-selector:focus {
             outline: none;
-            border-color: #007bff;
+            border-color: var(--accent);
         }
         canvas {
             border: 1px solid white;
@@ -113,11 +123,11 @@
         }
         #progressBar {
             height: 20px;
-            background-color: #007bff;
+            background-color: var(--accent);
             width: 0;
             text-align: center;
             line-height: 20px;
-            color: white;
+            color: var(--accent-contrast);
             border-radius: 5px;
             transition: width 0.3s ease-in-out;
         }
@@ -129,8 +139,8 @@
         #downloadBtn {
             margin-top: 20px;
             padding: 10px 20px;
-            background-color: #007bff;
-            color: white;
+            background-color: var(--accent);
+            color: var(--accent-contrast);
             border: none;
             cursor: pointer;
             display: none;
@@ -140,11 +150,26 @@
             font-size: 16px;
             border-radius: 5px;
         }
+        #downloadBtn:focus-visible {
+            outline: 3px solid var(--focus-glow);
+            outline-offset: 2px;
+        }
         .github-ribbon {
             position: fixed;
             top: 20px;
             left: 20px;
             z-index: 1000;
+        }
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
         }
         @media (max-width: 768px) {
             .github-ribbon {
@@ -171,13 +196,14 @@
     <a href="https://github.com/Chizkiyahu/pdf-dark-mode-converter" class="github-ribbon">
         <img decoding="async" width="149" height="149" src="./img/forkme_left_red_aa0000.png" alt="View Source Code on GitHub" loading="lazy">
     </a>
-    <div class="container">
+    <main class="container" id="mainContent" role="main">
         <div class="notice">
             🔒 This tool runs completely on your device. No data is uploaded or sent to any server. Your privacy is 100% protected.
         </div>
         <h1>PDF Dark Mode Converter</h1>
         <div class="controls">
             <label for="fileInput" class="custom-file-upload">Choose PDF File</label>
+            <label class="sr-only" for="themeSelector">Theme</label>
             <select id="themeSelector" class="theme-selector">
                 <option value="classic">Classic Inversion</option>
                 <option value="claude" selected>Claude Warm</option>
@@ -188,13 +214,13 @@
             </select>
         </div>
         <input type="file" id="fileInput" class="file-input" accept="application/pdf">
-        <div id="progressContainer">
+        <div id="progressContainer" aria-live="polite">
             <div id="progressBar"></div>
             <div id="progressText">0/0</div>
         </div>
         <button id="downloadBtn">Download failed? Click here</button>
         <div id="pdfContainer"></div>
-    </div>
+    </main>
 
     <script>
         let modifiedPdfBytes;
